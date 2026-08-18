@@ -31,11 +31,11 @@ The eddy covariance flux data used in this study are archived at Zenodo and free
 
 ### Software Availability Statement
 
-The code used to produce the results in this study is available at https://github.com/yehuda-yu/helman-2026-jgr-co2-wetland.
+The code used to produce the results in this study is available at https://github.com/M-M-VS-Lab/helman-2026-jgr-co2-wetland/tree/main.
 
 ## Citation
 
-Helman, D., Yungstein, Y., Tau, G., & Lensky, N. (2026). Restored but still emitting: High CO2 fluxes from a Mediterranean wetland challenge inundation-based restoration strategies. [Manuscript submitted for publication].
+Helman, D., Tau, G., Michael Y., & Lensky, N. (2026). Restored but Still Emitting: High CO2 fluxes from a Mediterranean wetland challenge inundation-based restoration strategies. [Manuscript under review].
 
 ## License
 
