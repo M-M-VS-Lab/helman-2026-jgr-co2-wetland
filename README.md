@@ -1,6 +1,6 @@
 # Restored but Still Emitting: High CO2 fluxes from a Mediterranean wetland challenge inundation-based restoration strategies
 
-Helman, D., Yungstein, Y., Tau, G., & Lensky, N.
+Helman, D., Tau, G., Michael, Y., & Lensky, N.
 
 ## Repository Contents
 
@@ -35,7 +35,7 @@ The code used to produce the results in this study is available at https://githu
 
 ## Citation
 
-Helman, D., Tau, G., Michael Y., & Lensky, N. (2026). Restored but Still Emitting: High CO2 fluxes from a Mediterranean wetland challenge inundation-based restoration strategies. [Manuscript under review].
+Helman, D., Tau, G., Michael, Y., & Lensky, N. (2026). Restored but Still Emitting: High CO2 fluxes from a Mediterranean wetland challenge inundation-based restoration strategies. [Manuscript under review].
 
 ## License
 
