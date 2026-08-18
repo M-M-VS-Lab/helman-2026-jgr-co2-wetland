@@ -1,4 +1,4 @@
-# Restored but Still Emitting: High CO2 Fluxes from a Mediterranean Wetland Challenge Inundation-Based Restoration Strategies
+# Restored but Still Emitting: High CO2 fluxes from a Mediterranean wetland challenge inundation-based restoration strategies
 
 Helman, D., Yungstein, Y., Tau, G., & Lensky, N.
 
