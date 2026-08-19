@@ -1,0 +1,1001 @@
+// ============================================================
+// SENTINEL-2 WETLAND, ALGAE AND LAKE KINNERET INDEX TIME SERIES
+// Lake Agmon-Hula open-water area
+// ============================================================
+
+// METHODS IMPLEMENTED IN THIS SCRIPT
+//
+// To assess chlorophyll dynamics and photosynthetic activity in
+// the water, Sentinel-2 surface-reflectance imagery is acquired
+// through Google Earth Engine for the water-station measurement
+// period from 25 May 2021 through 20 June 2024.
+//
+// NDVI is calculated following Rouse (1973):
+//
+//              B8 - B4
+// NDVI = ---------------------
+//              B8 + B4
+//
+// where B8 is near-infrared surface reflectance at 842 nm and
+// B4 is red surface reflectance at 665 nm.
+//
+// Scenes with CLOUDY_PIXEL_PERCENTAGE greater than 15% are
+// excluded. Remaining cloud, cirrus, shadow, defective and snow
+// pixels are masked using the Sentinel-2 Scene Classification
+// Layer (SCL).
+//
+// The AOI is the complete supplied study polygon. Valid pixel
+// values throughout the full polygon are spatially averaged for
+// every available Sentinel-2 acquisition. The resulting time
+// series contains raw satellite observations with no smoothing,
+// temporal averaging or interpolation.
+
+
+// ============================================================
+// 1. USER SETTINGS
+// ============================================================
+
+var START_DATE = '2021-05-25';
+
+// END_DATE is exclusive, so use 2024-06-21 to include 2024-06-20
+var END_DATE = '2024-06-21';
+
+// Maximum scene-level cloud percentage
+var MAX_CLOUD_PERCENT = 15;
+
+// Use 20 m because B5, B8A and B11 have 20 m resolution
+var REDUCTION_SCALE = 20;
+
+// Export settings
+var EXPORT_FOLDER = 'Hula_Sentinel2';
+
+var EXPORT_TABLE_NAME =
+  'Water_Station_Full_Polygon_TS_Raw_No_Interpolation';
+
+// Set true to export a median index image
+var EXPORT_MEDIAN_IMAGE = false;
+
+
+// ============================================================
+// 2. STUDY AREA — COMPLETE POLYGON
+// ============================================================
+
+var aoi = ee.Geometry.Polygon(
+  [
+    [
+      [35.611943296957264, 33.100367574014580],
+      [35.611278109121570, 33.102039153840500],
+      [35.610591463613760, 33.102452579627396],
+      [35.609304003286610, 33.102488529603924],
+      [35.609883360433830, 33.100834815463806],
+      [35.610248140859850, 33.099540582692235],
+      [35.611084725709250, 33.098570338538060],
+      [35.611835744233420, 33.098390580494886]
+    ]
+  ],
+  null,
+  false
+);
+
+Map.centerObject(aoi, 17);
+
+Map.addLayer(
+  aoi,
+  {
+    color: 'yellow'
+  },
+  'Water station: full polygon',
+  true
+);
+
+
+// ============================================================
+// 3. SENTINEL-2 CLOUD AND SHADOW MASK
+// ============================================================
+
+function maskSentinel2(image) {
+
+  var scl = image.select('SCL');
+
+  // Sentinel-2 Scene Classification Layer:
+  // 1  = saturated/defective
+  // 3  = cloud shadow
+  // 7  = unclassified
+  // 8  = medium-probability cloud
+  // 9  = high-probability cloud
+  // 10 = cirrus
+  // 11 = snow/ice
+
+  var validMask = scl.neq(1)
+    .and(scl.neq(3))
+    .and(scl.neq(7))
+    .and(scl.neq(8))
+    .and(scl.neq(9))
+    .and(scl.neq(10))
+    .and(scl.neq(11));
+
+  // Select optical bands and convert DN to surface reflectance
+  var reflectance = image.select([
+      'B2',
+      'B3',
+      'B4',
+      'B5',
+      'B6',
+      'B7',
+      'B8',
+      'B8A',
+      'B11',
+      'B12'
+    ])
+    .multiply(0.0001)
+    .updateMask(validMask);
+
+  return reflectance.copyProperties(
+    image,
+    [
+      'system:time_start',
+      'system:index',
+      'CLOUDY_PIXEL_PERCENTAGE'
+    ]
+  );
+}
+
+
+// ============================================================
+// 4. SAFE NORMALIZED-DIFFERENCE FUNCTION
+// ============================================================
+
+function calculateNormalizedDifference(
+  image,
+  firstBand,
+  secondBand,
+  outputName
+) {
+
+  var first = image.select(firstBand);
+  var second = image.select(secondBand);
+
+  var denominator = first.add(second);
+
+  return first
+    .subtract(second)
+    .divide(denominator)
+    .updateMask(denominator.abs().gt(0.000001))
+    .rename(outputName);
+}
+
+
+// ============================================================
+// 5. CALCULATE WETLAND AND ALGAE INDICES
+// ============================================================
+
+function addWetlandIndices(image) {
+
+  var blue = image.select('B2');
+  var green = image.select('B3');
+  var red = image.select('B4');
+
+  var redEdge1 = image.select('B5');
+  var redEdge2 = image.select('B6');
+
+  var nir = image.select('B8');
+  var narrowNir = image.select('B8A');
+
+  var swir1 = image.select('B11');
+
+
+  // ----------------------------------------------------------
+  // 5.1 GCC: Green Chromatic Coordinate
+  //
+  // GCC = Green / (Red + Green + Blue)
+  // ----------------------------------------------------------
+
+  var rgbSum = red
+    .add(green)
+    .add(blue);
+
+  var gcc = green
+    .divide(rgbSum)
+    .updateMask(rgbSum.abs().gt(0.000001))
+    .rename('GCC');
+
+
+  // ----------------------------------------------------------
+  // 5.2 NDVI: Normalized Difference Vegetation Index
+  //
+  // NDVI = (B8 - B4) / (B8 + B4)
+  // ----------------------------------------------------------
+
+  var ndvi = calculateNormalizedDifference(
+    image,
+    'B8',
+    'B4',
+    'NDVI'
+  );
+
+
+  // ----------------------------------------------------------
+  // 5.3 NDRE: Normalized Difference Red-Edge Index
+  //
+  // NDRE = (B8A - B5) / (B8A + B5)
+  // ----------------------------------------------------------
+
+  var ndre = calculateNormalizedDifference(
+    image,
+    'B8A',
+    'B5',
+    'NDRE'
+  );
+
+
+  // ----------------------------------------------------------
+  // 5.4 NDAVI: Normalized Difference Aquatic Vegetation Index
+  //
+  // NDAVI = (B8 - B2) / (B8 + B2)
+  // ----------------------------------------------------------
+
+  var ndavi = calculateNormalizedDifference(
+    image,
+    'B8',
+    'B2',
+    'NDAVI'
+  );
+
+
+  // ----------------------------------------------------------
+  // 5.5 WAVI: Water-Adjusted Vegetation Index
+  //
+  // WAVI = (1 + L) × (NIR - Blue) / (NIR + Blue + L)
+  // L = 0.5
+  // ----------------------------------------------------------
+
+  var L = 0.5;
+
+  var waviDenominator = nir
+    .add(blue)
+    .add(L);
+
+  var wavi = nir
+    .subtract(blue)
+    .multiply(1 + L)
+    .divide(waviDenominator)
+    .updateMask(waviDenominator.abs().gt(0.000001))
+    .rename('WAVI');
+
+
+  // ----------------------------------------------------------
+  // 5.6 MNDWI: Modified Normalized Difference Water Index
+  //
+  // MNDWI = (B3 - B11) / (B3 + B11)
+  // ----------------------------------------------------------
+
+  var mndwi = calculateNormalizedDifference(
+    image,
+    'B3',
+    'B11',
+    'MNDWI'
+  );
+
+
+  // ----------------------------------------------------------
+  // 5.7 LSWI/NDMI: Land Surface Water Index
+  //
+  // LSWI = (B8 - B11) / (B8 + B11)
+  // ----------------------------------------------------------
+
+  var lswi = calculateNormalizedDifference(
+    image,
+    'B8',
+    'B11',
+    'LSWI_NDMI'
+  );
+
+
+  // ----------------------------------------------------------
+  // 5.8 NDCI: Normalized Difference Chlorophyll Index
+  //
+  // NDCI = (B5 - B4) / (B5 + B4)
+  // ----------------------------------------------------------
+
+  var ndci = calculateNormalizedDifference(
+    image,
+    'B5',
+    'B4',
+    'NDCI'
+  );
+
+
+  // ----------------------------------------------------------
+  // 5.9 FAI: Floating Algae Index
+  //
+  // FAI = NIR - NIR baseline
+  //
+  // The NIR baseline is interpolated spectrally between red
+  // and SWIR1. This spectral baseline is part of the FAI
+  // equation and is not time-series interpolation.
+  //
+  // B4  = 665 nm
+  // B8  = 842 nm
+  // B11 = 1610 nm
+  // ----------------------------------------------------------
+
+  var redWavelength = 665;
+  var nirWavelength = 842;
+  var swirWavelength = 1610;
+
+  var spectralWeight = (
+    nirWavelength - redWavelength
+  ) / (
+    swirWavelength - redWavelength
+  );
+
+  var nirBaseline = red.add(
+    swir1
+      .subtract(red)
+      .multiply(spectralWeight)
+  );
+
+  var fai = nir
+    .subtract(nirBaseline)
+    .rename('FAI');
+
+
+  // ----------------------------------------------------------
+  // 5.10 NDTI: Normalized Difference Turbidity Index
+  //
+  // NDTI = (B4 - B3) / (B4 + B3)
+  // ----------------------------------------------------------
+
+  var ndti = calculateNormalizedDifference(
+    image,
+    'B4',
+    'B3',
+    'NDTI'
+  );
+
+
+  // ----------------------------------------------------------
+  // 5.11 NDPI: Normalized Difference Pond Index
+  //
+  // NDPI = (B11 - B3) / (B11 + B3)
+  // ----------------------------------------------------------
+
+  var ndpi = calculateNormalizedDifference(
+    image,
+    'B11',
+    'B3',
+    'NDPI'
+  );
+
+
+  // ----------------------------------------------------------
+  // 5.12 LAKE KINNERET TWO-BAND NIR-RED MODEL
+  //
+  // Original MERIS form:
+  // Rrs(708) / Rrs(665)
+  //
+  // Sentinel-2 approximation:
+  // KINNERET_2B = B5 / B4
+  //
+  // Reference:
+  // Yacobi et al. (2011), Water Research 45, 2428–2436
+  // https://doi.org/10.1016/j.watres.2011.02.002
+  // https://digitalcommons.unl.edu/cgi/viewcontent.cgi?
+  // article=1301&context=natrespapers
+  //
+  // Local field calibration is required before converting this
+  // value into chlorophyll-a concentration.
+  // ----------------------------------------------------------
+
+  var kinneret2b = redEdge1
+    .divide(red)
+    .updateMask(red.abs().gt(0.000001))
+    .rename('KINNERET_2B');
+
+
+  // ----------------------------------------------------------
+  // 5.13 LAKE KINNERET THREE-BAND NIR-RED MODEL
+  //
+  // Original MERIS form:
+  // [1/Rrs(665) - 1/Rrs(708)] × Rrs(753)
+  //
+  // Sentinel-2 approximation:
+  // KINNERET_3B = [1/B4 - 1/B5] × B6
+  // ----------------------------------------------------------
+
+  var validKinneret3b = red.abs().gt(0.000001)
+    .and(redEdge1.abs().gt(0.000001));
+
+  var kinneret3b = red
+    .pow(-1)
+    .subtract(redEdge1.pow(-1))
+    .multiply(redEdge2)
+    .updateMask(validKinneret3b)
+    .rename('KINNERET_3B');
+
+
+  return image.addBands([
+    gcc,
+    ndvi,
+    ndre,
+    ndavi,
+    wavi,
+    mndwi,
+    lswi,
+    ndci,
+    fai,
+    ndti,
+    ndpi,
+    kinneret2b,
+    kinneret3b
+  ]);
+}
+
+
+// ============================================================
+// 6. INDEX BAND LIST
+// ============================================================
+
+var INDEX_BANDS = [
+  'GCC',
+  'NDVI',
+  'NDTI',
+  'NDPI',
+  'FAI',
+  'NDCI',
+  'KINNERET_2B',
+  'KINNERET_3B'
+];
+
+
+// ============================================================
+// 7. LOAD SENTINEL-2 COLLECTION
+// ============================================================
+
+var sentinel2 = ee.ImageCollection(
+    'COPERNICUS/S2_SR_HARMONIZED'
+  )
+  .filterBounds(aoi)
+  .filterDate(
+    START_DATE,
+    END_DATE
+  )
+  .filter(
+    ee.Filter.lte(
+      'CLOUDY_PIXEL_PERCENTAGE',
+      MAX_CLOUD_PERCENT
+    )
+  )
+  .map(maskSentinel2)
+  .map(addWetlandIndices)
+  .sort('system:time_start');
+
+print(
+  'Number of Sentinel-2 images:',
+  sentinel2.size()
+);
+
+print(
+  'First processed image:',
+  sentinel2.first()
+);
+
+print(
+  'Calculated index bands:',
+  INDEX_BANDS
+);
+
+
+// ============================================================
+// 8. CONVERT RAW IMAGES TO A TIME-SERIES TABLE
+// ============================================================
+
+var imageList = sentinel2.toList(
+  sentinel2.size()
+);
+
+var featureList = imageList.map(
+  function(imageObject) {
+
+    var image = ee.Image(imageObject);
+
+    var date = ee.Date(
+      image.get('system:time_start')
+    );
+
+    // Spatial mean of valid pixels throughout the full AOI.
+    var statistics = image
+      .select(INDEX_BANDS)
+      .reduceRegion({
+        reducer: ee.Reducer.mean(),
+        geometry: aoi,
+        scale: REDUCTION_SCALE,
+        maxPixels: 1e9,
+        bestEffort: false,
+        tileScale: 4
+      });
+
+    return ee.Feature(
+      null,
+      statistics
+    )
+    .set({
+      'date': date.format('YYYY-MM-dd'),
+      'year': date.get('year'),
+      'month': date.get('month'),
+      'day_of_year':
+        date.getRelative('day', 'year').add(1),
+      'system:time_start':
+        image.get('system:time_start'),
+      'system_index':
+        image.get('system:index'),
+      'scene_cloud_percent':
+        image.get('CLOUDY_PIXEL_PERCENTAGE')
+    });
+  }
+);
+
+var timeSeries = ee.FeatureCollection(
+  featureList
+)
+.filter(
+  ee.Filter.notNull([
+    'GCC',
+    'NDVI',
+    'NDTI',
+    'NDPI',
+    'FAI',
+    'NDCI',
+    'KINNERET_2B',
+    'KINNERET_3B'
+  ])
+)
+.sort('system:time_start');
+
+print(
+  'Time-series table:',
+  timeSeries.limit(10)
+);
+
+print(
+  'Valid time-series observations:',
+  timeSeries.size()
+);
+
+
+// ============================================================
+// 9. RAW NDVI COMBINED WITH EACH OTHER INDEX
+//
+// Each chart contains:
+//   - NDVI on the left vertical axis
+//   - One comparison index on the right vertical axis
+//
+// No temporal averaging, smoothing or interpolation is applied.
+// Each point represents one Sentinel-2 image.
+// ============================================================
+
+function createRawNdviComparisonChart(
+  comparisonProperty,
+  comparisonLabel,
+  chartTitle,
+  comparisonAxisTitle,
+  comparisonColor
+) {
+
+  return ui.Chart.feature.byFeature({
+    features: timeSeries,
+    xProperty: 'system:time_start',
+    yProperties: [
+      'NDVI',
+      comparisonProperty
+    ]
+  })
+  .setChartType('ScatterChart')
+  .setOptions({
+    title: chartTitle,
+
+    hAxis: {
+      title: 'Date',
+      format: 'MMM yyyy',
+      gridlines: {
+        color: '#E0E0E0'
+      }
+    },
+
+    vAxes: {
+      0: {
+        title: 'NDVI',
+        titleTextStyle: {
+          color: '#1B5E20'
+        },
+        textStyle: {
+          color: '#1B5E20'
+        },
+        gridlines: {
+          color: '#E0E0E0'
+        }
+      },
+
+      1: {
+        title: comparisonAxisTitle,
+        titleTextStyle: {
+          color: comparisonColor
+        },
+        textStyle: {
+          color: comparisonColor
+        },
+        gridlines: {
+          color: 'transparent'
+        }
+      }
+    },
+
+    series: {
+      0: {
+        color: '#1B5E20',
+        lineWidth: 0,
+        pointSize: 4,
+        targetAxisIndex: 0,
+        labelInLegend: 'NDVI'
+      },
+
+      1: {
+        color: comparisonColor,
+        lineWidth: 0,
+        pointSize: 4,
+        targetAxisIndex: 1,
+        labelInLegend: comparisonLabel
+      }
+    },
+
+    pointSize: 4,
+    interpolateNulls: false,
+
+    legend: {
+      position: 'right'
+    },
+
+    chartArea: {
+      left: 80,
+      right: 130,
+      top: 60,
+      bottom: 80,
+      width: '70%',
+      height: '65%'
+    }
+  });
+}
+
+
+// ------------------------------------------------------------
+// CHART 1: NDVI + GCC
+// ------------------------------------------------------------
+
+var ndviGccChart = createRawNdviComparisonChart(
+  'GCC',
+  'GCC',
+  'Raw Sentinel-2 NDVI and GCC — full polygon, no interpolation',
+  'GCC',
+  '#66BB6A'
+);
+
+print(ndviGccChart);
+
+
+// ------------------------------------------------------------
+// CHART 2: NDVI + NDTI
+// ------------------------------------------------------------
+
+var ndviNdtiChart = createRawNdviComparisonChart(
+  'NDTI',
+  'NDTI',
+  'Raw Sentinel-2 NDVI and NDTI — full polygon, no interpolation',
+  'NDTI',
+  '#8D6E63'
+);
+
+print(ndviNdtiChart);
+
+
+// ------------------------------------------------------------
+// CHART 3: NDVI + NDPI
+// ------------------------------------------------------------
+
+var ndviNdpiChart = createRawNdviComparisonChart(
+  'NDPI',
+  'NDPI',
+  'Raw Sentinel-2 NDVI and NDPI — full polygon, no interpolation',
+  'NDPI',
+  '#1565C0'
+);
+
+print(ndviNdpiChart);
+
+
+// ------------------------------------------------------------
+// CHART 4: NDVI + FAI
+// ------------------------------------------------------------
+
+var ndviFaiChart = createRawNdviComparisonChart(
+  'FAI',
+  'FAI',
+  'Raw Sentinel-2 NDVI and FAI — full polygon, no interpolation',
+  'FAI',
+  '#43A047'
+);
+
+print(ndviFaiChart);
+
+
+// ------------------------------------------------------------
+// CHART 5: NDVI + NDCI
+// ------------------------------------------------------------
+
+var ndviNdciChart = createRawNdviComparisonChart(
+  'NDCI',
+  'NDCI',
+  'Raw Sentinel-2 NDVI and NDCI — full polygon, no interpolation',
+  'NDCI',
+  '#D81B60'
+);
+
+print(ndviNdciChart);
+
+
+// ------------------------------------------------------------
+// CHART 6: NDVI + LAKE KINNERET TWO-BAND MODEL
+// ------------------------------------------------------------
+
+var ndviKinneret2bChart = createRawNdviComparisonChart(
+  'KINNERET_2B',
+  'Kinneret two-band',
+  'Raw NDVI and Lake Kinneret two-band model — no interpolation',
+  'B5 / B4',
+  '#7B1FA2'
+);
+
+print(ndviKinneret2bChart);
+
+
+// ------------------------------------------------------------
+// CHART 7: NDVI + LAKE KINNERET THREE-BAND MODEL
+// ------------------------------------------------------------
+
+var ndviKinneret3bChart = createRawNdviComparisonChart(
+  'KINNERET_3B',
+  'Kinneret three-band',
+  'Raw NDVI and Lake Kinneret three-band model — no interpolation',
+  '(1/B4 - 1/B5) × B6',
+  '#512DA8'
+);
+
+print(ndviKinneret3bChart);
+
+
+// ============================================================
+// 10. MAP VISUALIZATION
+// ============================================================
+
+var medianIndices = sentinel2
+  .select(INDEX_BANDS)
+  .median()
+  .clip(aoi);
+
+var medianRgb = sentinel2
+  .select([
+    'B4',
+    'B3',
+    'B2'
+  ])
+  .median()
+  .clip(aoi);
+
+Map.addLayer(
+  medianRgb,
+  {
+    min: 0,
+    max: 0.25,
+    gamma: 1.2
+  },
+  'Sentinel-2 median RGB',
+  true
+);
+
+Map.addLayer(
+  medianIndices.select('GCC'),
+  {
+    min: 0.25,
+    max: 0.45,
+    palette: [
+      '5D4037',
+      'FFF59D',
+      '66BB6A',
+      '1B5E20'
+    ]
+  },
+  'GCC: visible greenness',
+  false
+);
+
+Map.addLayer(
+  medianIndices.select('NDVI'),
+  {
+    min: -0.5,
+    max: 0.8,
+    palette: [
+      '0D47A1',
+      'FFFFFF',
+      'A5D6A7',
+      '1B5E20'
+    ]
+  },
+  'NDVI: vegetation',
+  false
+);
+
+Map.addLayer(
+  medianIndices.select('NDCI'),
+  {
+    min: -0.4,
+    max: 0.4,
+    palette: [
+      '313695',
+      '74ADD1',
+      'FFFFBF',
+      'FDAE61',
+      'A50026'
+    ]
+  },
+  'NDCI: chlorophyll/algae proxy',
+  false
+);
+
+Map.addLayer(
+  medianIndices.select('FAI'),
+  {
+    min: -0.03,
+    max: 0.05,
+    palette: [
+      '0D47A1',
+      'FFFFFF',
+      'C5E1A5',
+      '43A047',
+      '004D40'
+    ]
+  },
+  'FAI: floating algae',
+  false
+);
+
+Map.addLayer(
+  medianIndices.select('NDTI'),
+  {
+    min: -0.4,
+    max: 0.4,
+    palette: [
+      '1565C0',
+      'E3F2FD',
+      'FFF8E1',
+      'FFB74D',
+      '6D4C41'
+    ]
+  },
+  'NDTI: turbidity',
+  false
+);
+
+Map.addLayer(
+  medianIndices.select('NDPI'),
+  {
+    min: -1,
+    max: 1,
+    palette: [
+      '0D47A1',
+      '81D4FA',
+      'FFFFFF',
+      'F9A825',
+      '6D4C41'
+    ]
+  },
+  'NDPI: pond/open water',
+  false
+);
+
+
+// ============================================================
+// 11. EXPORT COMPLETE RAW TIME-SERIES CSV
+// ============================================================
+
+var tableSelectors = [
+  'date',
+  'year',
+  'month',
+  'day_of_year',
+  'system:time_start',
+  'system_index',
+  'scene_cloud_percent'
+]
+.concat(INDEX_BANDS);
+
+Export.table.toDrive({
+  collection: timeSeries,
+  description: EXPORT_TABLE_NAME,
+  folder: EXPORT_FOLDER,
+  fileNamePrefix: EXPORT_TABLE_NAME,
+  fileFormat: 'CSV',
+  selectors: tableSelectors
+});
+
+
+// ============================================================
+// 12. OPTIONAL EXPORT OF MEDIAN INDEX IMAGE
+// ============================================================
+
+if (EXPORT_MEDIAN_IMAGE) {
+
+  Export.image.toDrive({
+    image: medianIndices,
+    description:
+      'Hula_Wetland_Indices_Median',
+    folder:
+      EXPORT_FOLDER,
+    fileNamePrefix:
+      'Hula_Wetland_Indices_Median',
+    region:
+      aoi,
+    scale:
+      REDUCTION_SCALE,
+    crs:
+      'EPSG:4326',
+    maxPixels:
+      1e10,
+    fileFormat:
+      'GeoTIFF'
+  });
+}
+
+
+// ============================================================
+// 13. FINAL INFORMATION
+// ============================================================
+
+print(
+  'CSV export name:',
+  EXPORT_TABLE_NAME
+);
+
+print(
+  'Google Drive folder:',
+  EXPORT_FOLDER
+);
+
+print(
+  'Raw output bands:',
+  INDEX_BANDS
+);
+
+print(
+  'Analysis period (inclusive):',
+  '2021-05-25 to 2024-06-20'
+);
+
+print(
+  'Maximum scene cloud cover:',
+  MAX_CLOUD_PERCENT + '%'
+);
+
+print(
+  'Spatial support:',
+  'Mean of valid pixels throughout the complete supplied polygon'
+);
+
+print(
+  'Important: GCC, NDCI, FAI, NDTI and NDPI are qualitative ' +
+  'proxies. Field observations are required to convert them ' +
+  'into chlorophyll-a or turbidity concentrations.'
+);
+
+print(
+  'Charts use raw Sentinel-2 observations only: ' +
+  'no smoothing, temporal averaging or interpolation.'
+);
