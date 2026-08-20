@@ -27,7 +27,7 @@ pip install -r requirements.txt
 
 ### Data Availability Statement
 
-The eddy covariance flux data used in this study are archived at Zenodo and freely available at https://doi.org/10.5281/zenodo.18781640 (Helman et al., 2026). The global wetland loss dataset (Fluet-Chouinard et al., 2023) is available at https://zenodo.org/records/7616651.
+The eddy covariance flux data used in this study are archived at Zenodo and freely available at https://doi.org/10.5281/zenodo.21998652 (Helman et al., 2026). The global wetland loss dataset (Fluet-Chouinard et al., 2023) is available at https://zenodo.org/records/7616651.
 
 ### Software Availability Statement
 
@@ -36,6 +36,8 @@ The code used to produce the results in this study is available at https://githu
 ## Citation
 
 Helman, D., Tau, G., Michael, Y., & Lensky, N. (2026). Restored but Still Emitting: High CO2 fluxes from a Mediterranean wetland challenge inundation-based restoration strategies. [Manuscript under review].
+
+Helman, D., Tau, G., Michael, Y., & Lensky, N. (2026). Restored but Still Emitting: High CO2 fluxes from a Mediterranean wetland challenge inundation-based restoration strategies [Data set]. Zenodo. https://doi.org/10.5281/zenodo.21998652
 
 ## License
 
